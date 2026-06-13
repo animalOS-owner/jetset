@@ -23,6 +23,8 @@ interface VoiceRun {
   total: number
 }
 
+const SETTINGS_KEY = 'jetset-manor-audio'
+
 export class Chip {
   private ctx: AudioContext | null = null
   private master: GainNode | null = null
@@ -32,6 +34,30 @@ export class Chip {
   private current: Tune | null = null
   /** when true the music is silenced; sound effects still play */
   muted = false
+  /** overall loudness, 0..1; scales the master bus (music + SFX) */
+  volume = 0.6
+
+  constructor() {
+    // Restore the player's audio preferences from a previous session.
+    try {
+      const raw = localStorage.getItem(SETTINGS_KEY)
+      if (raw) {
+        const s = JSON.parse(raw) as { muted?: boolean; volume?: number }
+        if (typeof s.muted === 'boolean') this.muted = s.muted
+        if (typeof s.volume === 'number') this.volume = Math.max(0, Math.min(1, s.volume))
+      }
+    } catch {
+      /* corrupt settings — fall back to defaults */
+    }
+  }
+
+  private saveSettings(): void {
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify({ muted: this.muted, volume: this.volume }))
+    } catch {
+      /* storage unavailable — settings just won't persist */
+    }
+  }
 
   /** Must be called from a user-gesture handler at least once. */
   unlock(): void {
@@ -41,7 +67,7 @@ export class Chip {
     }
     this.ctx = new AudioContext()
     this.master = this.ctx.createGain()
-    this.master.gain.value = 0.5
+    this.master.gain.value = this.volume
     this.master.connect(this.ctx.destination)
     this.musicBus = this.ctx.createGain()
     this.musicBus.gain.value = this.muted ? 0 : 1
@@ -53,7 +79,16 @@ export class Chip {
   toggleMute(): boolean {
     this.muted = !this.muted
     if (this.musicBus) this.musicBus.gain.value = this.muted ? 0 : 1
+    this.saveSettings()
     return this.muted
+  }
+
+  /** Nudge overall loudness by `delta` (clamped to 0..1) and persist it. */
+  adjustVolume(delta: number): number {
+    this.volume = Math.max(0, Math.min(1, Math.round((this.volume + delta) * 10) / 10))
+    if (this.master) this.master.gain.value = this.volume
+    this.saveSettings()
+    return this.volume
   }
 
   play(tune: Tune): void {
