@@ -37,9 +37,15 @@ export const MYZONE: RoomDef[] = [
   **3 columns**. No air control.
 - Walking up/down uses **ramps** (45°). A 1-row step cannot be walked up —
   use ramps for walkable slopes, or platforms 1-2 rows apart for jump-stairs.
-  Fill the area underneath ramps with `#`.
-- Falls of **6 or more rows are fatal** (distance carries across rooms).
-  Never force a fall > 5 rows.
+  **Ramps must be BARE diagonals**: one `/` or `\` per column over open space,
+  floor below. Do NOT fill under or beside ramps with `#` — solid fill in the
+  cell a ramp climbs into (its high side) or stacked directly above a ramp
+  wedges Willy and makes the slope unwalkable. For a solid-looking hill use
+  `/` up → short `=` flat top → `\` down, all bare. The validator rejects
+  blocking fill and stacked ramps.
+- **Falls within a room are survivable** (only a plummet through several
+  rooms is fatal). Willy descends a platform stack with **down + jump** to
+  drop through one-way platforms. Still avoid forcing blind multi-room drops.
 - Conveyors drag Willy; he can only escape by jumping.
 - Guardians kill on touch; they patrol on fixed paths (`axis` h/v, cells
   `a`..`b` inclusive, fixed `at` = top row for h / column for v, `speed`

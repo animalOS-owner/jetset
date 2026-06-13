@@ -26,9 +26,11 @@ interface VoiceRun {
 export class Chip {
   private ctx: AudioContext | null = null
   private master: GainNode | null = null
+  private musicBus: GainNode | null = null // music routes here; SFX go to master
   private runs: VoiceRun[] = []
   private timer: number | null = null
   private current: Tune | null = null
+  /** when true the music is silenced; sound effects still play */
   muted = false
 
   /** Must be called from a user-gesture handler at least once. */
@@ -39,14 +41,18 @@ export class Chip {
     }
     this.ctx = new AudioContext()
     this.master = this.ctx.createGain()
-    this.master.gain.value = this.muted ? 0 : 0.5
+    this.master.gain.value = 0.5
     this.master.connect(this.ctx.destination)
+    this.musicBus = this.ctx.createGain()
+    this.musicBus.gain.value = this.muted ? 0 : 1
+    this.musicBus.connect(this.master)
     if (this.current) this.play(this.current)
   }
 
+  /** Toggle music on/off (sound effects are unaffected). Returns muted state. */
   toggleMute(): boolean {
     this.muted = !this.muted
-    if (this.master) this.master.gain.value = this.muted ? 0 : 0.5
+    if (this.musicBus) this.musicBus.gain.value = this.muted ? 0 : 1
     return this.muted
   }
 
@@ -97,7 +103,7 @@ export class Chip {
     g.gain.setValueAtTime(peak, at + Math.max(0.01, dur - 0.04))
     g.gain.linearRampToValueAtTime(0.0001, at + dur)
     osc.connect(g)
-    g.connect(this.master!)
+    g.connect(this.musicBus ?? this.master!)
     osc.start(at)
     osc.stop(at + dur + 0.02)
   }

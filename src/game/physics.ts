@@ -44,27 +44,37 @@ function collidesWall(room: Room, x: number, y: number): boolean {
 }
 
 /**
- * Highest support surface within `snap` px of feetY at horizontal position x,
- * or null. Flat tops are sensed at both hitbox edges; ramps at the centre.
+ * Highest support surface near feetY at horizontal position x, or null. Flat
+ * tops (sensed at both hitbox edges) use the tight `snap`; ramps (sensed at the
+ * centre) use a full-cell tolerance, since a 45° ramp legitimately rises up to
+ * one cell across the hitbox as Willy walks along it. Without the wider ramp
+ * tolerance, climbing a ramp loses the slope and snaps down onto the fill
+ * beneath it, wedging Willy against the next block.
  */
 function findSupport(room: Room, x: number, feetY: number, snap: number): number | null {
   let best: number | null = null
-  const consider = (sy: number) => {
-    if (Math.abs(sy - feetY) <= snap && (best === null || sy < best)) best = sy
+  const consider = (sy: number, tol: number) => {
+    if (Math.abs(sy - feetY) <= tol && (best === null || sy < best)) best = sy
   }
+  // Flat tops at both feet, tight tolerance.
   const r0 = Math.floor((feetY - snap) / CELL)
   const r1 = Math.floor((feetY + snap) / CELL)
-  const sensors = [x + 1, x + P_W - 2]
   for (let r = r0; r <= r1; r++) {
     if (r < 0 || r >= ROWS) continue
-    for (const sx of sensors) {
-      const t = tileAt(room, Math.floor(sx / CELL), r)
-      if (isSupport(t)) consider(r * CELL)
+    for (const sx of [x + 1, x + P_W - 2]) {
+      if (isSupport(tileAt(room, Math.floor(sx / CELL), r))) consider(r * CELL, snap)
     }
-    const cx = x + P_W / 2
-    const c = Math.floor(cx / CELL)
+  }
+  // Ramp under the centre, generous tolerance (one cell).
+  const rampTol = Math.max(snap, CELL)
+  const cx = x + P_W / 2
+  const c = Math.floor(cx / CELL)
+  const rr0 = Math.floor((feetY - rampTol) / CELL)
+  const rr1 = Math.floor((feetY + rampTol) / CELL)
+  for (let r = rr0; r <= rr1; r++) {
+    if (r < 0 || r >= ROWS) continue
     const t = tileAt(room, c, r)
-    if (isRamp(t)) consider(r * CELL + rampSurface(t, Math.floor(cx) - c * CELL))
+    if (isRamp(t)) consider(r * CELL + rampSurface(t, Math.floor(cx) - c * CELL), rampTol)
   }
   return best
 }
@@ -105,6 +115,20 @@ function conveyorUnder(room: Room, x: number, feetY: number): -1 | 0 | 1 {
     if (t === T.CONV_R) return 1
   }
   return 0
+}
+
+/** True when Willy rests on a one-way platform/conveyor (not solid floor or a
+ *  ramp) and could therefore drop through it. */
+function onOneWayPlatform(room: Room, x: number, feetY: number): boolean {
+  if (feetY % CELL !== 0) return false
+  const r = feetY / CELL
+  let platform = false
+  for (const sx of [x + 1, x + P_W - 2]) {
+    const t = tileAt(room, Math.floor(sx / CELL), r)
+    if (t === T.WALL) return false // partly on solid ground — don't drop
+    if (t === T.PLATFORM || t === T.CONV_L || t === T.CONV_R) platform = true
+  }
+  return platform
 }
 
 function tryGrabRope(p: Player, room: Room, t: number): boolean {
@@ -164,6 +188,15 @@ export function stepPlayer(p: Player, inp: InputState, room: Room, t: number): S
       p.y = pt.y - 6
       p.facing = ropePoint(def, t, p.rope.s).x > ropePoint(def, t - 1, p.rope.s).x ? 1 : -1
     }
+  } else if (p.onGround && inp.down && inp.jumpHit && onOneWayPlatform(room, p.x, p.y + P_H)) {
+    // Drop through a one-way platform (down + jump): a controlled descent so a
+    // stack of platforms is never a one-way trap. Solid floors/ramps ignore it.
+    p.y += 6 // clear the platform surface so it isn't re-caught this frame
+    p.onGround = false
+    p.jumping = false
+    p.airVx = 0
+    p.vy = 0.6
+    p.apexY = p.y
   } else if (p.onGround) {
     const feetY = p.y + P_H
     const belt = conveyorUnder(room, p.x, feetY)

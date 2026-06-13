@@ -628,7 +628,11 @@ export class Game {
       `${h12}:${mm.toString().padStart(2, '0')}${ampm}`,
       VIEW_W - 64, ROOM_H + 34, '#a8c8e8', 1,
     )
-    r.text('TAB: MAP', VIEW_W - 64, ROOM_H + 46, '#5a5a6a', 1)
+    r.text(
+      this.chip.muted ? 'N: SOUND OFF' : 'N: SOUND ON',
+      VIEW_W - 80, ROOM_H + 46,
+      this.chip.muted ? '#b86a6a' : '#6a9a6a', 1,
+    )
   }
 
   private renderMap(r: Renderer): void {
@@ -711,8 +715,9 @@ export class Game {
     ctx.fillStyle = '#08080e'
     ctx.fillRect(0, 254, VIEW_W, 2)
 
-    r.textCentered('ARROWS/WASD MOVE   Z/SPACE JUMP', VIEW_W / 2, 270, '#7a7a8e', 1)
-    r.textCentered('ESC PAUSE   TAB MAP   N SOUND', VIEW_W / 2, 284, '#7a7a8e', 1)
+    r.textCentered('ARROWS/WASD MOVE   Z/SPACE JUMP', VIEW_W / 2, 268, '#7a7a8e', 1)
+    r.textCentered('DOWN + JUMP DROPS THROUGH PLATFORMS', VIEW_W / 2, 280, '#9a9ab0', 1)
+    r.textCentered('ESC PAUSE   TAB MAP   N MUSIC', VIEW_W / 2, 292, '#7a7a8e', 1)
     r.textCentered(
       `M: PRACTICE MODE ${this.practice ? 'ON' : 'OFF'}`,
       VIEW_W / 2, 298, this.practice ? '#8ae08a' : '#55556a', 1,

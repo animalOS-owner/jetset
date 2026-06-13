@@ -26,7 +26,10 @@ export const WALK = 1.25
 export const GRAVITY = 0.18
 export const JUMP_VY = 3.65 // apex ~35px: lands on platforms 2 cells up, never 3
 export const MAX_FALL = 4
-export const FALL_DEATH = 96 // falling more than 6 cells is fatal
+// Any fall within a single room survives (the playfield is ~13 cells tall);
+// only a plummet through multiple rooms is fatal. Keeps descent fair — paired
+// with drop-through platforms (down+jump) for controlled stepping-down.
+export const FALL_DEATH = 14 * CELL
 
 export const START_LIVES = 8
 export const SPAWN_GRACE = 50 // frames of invulnerability after a respawn

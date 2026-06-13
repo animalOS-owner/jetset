@@ -30,7 +30,7 @@ node tools/render-map.ts   # draws the whole mansion to map.svg
 | ↑ ↓ / W S | climb ropes |
 | Tab / M | map of discovered rooms |
 | Esc / P | pause |
-| N | sound on/off |
+| N | music on/off (sound effects keep playing) |
 | M (title screen) | practice mode (infinite lives) |
 
 A gamepad works too. Progress autosaves on every room change.
@@ -40,7 +40,9 @@ A gamepad works too. Progress autosaves on every room change.
 - One screen per room; walking off an edge flips to the neighbouring room.
 - The jump arc is fixed at takeoff, exactly like 1984. Walking off a ledge
   drops you straight down.
-- Falling more than six rows is fatal — and fall distance carries across rooms.
+- To climb down a stack of platforms, hold **Down + Jump** to drop through the
+  one-way platform you're standing on and land on the next one below.
+- A fall within a room is survivable; only a plummet through several rooms kills.
 - Guardians patrol fixed deterministic paths. Learn them.
 - Death returns you to where you entered the room. Unlike the original,
   three quick deaths in one room rewinds you to the previous room instead of

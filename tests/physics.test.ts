@@ -108,21 +108,26 @@ describe('willy physics', () => {
     expect(p.x).toBe(xAtFall) // no horizontal drift while falling
   })
 
-  it('a fall of more than 6 rows is fatal', () => {
-    const room = makeRoom((l) => put(l, 4, 4, '===='))
-    const p = standing(5 * CELL, 4)
+  it('a full-room-height fall is survivable', () => {
+    // step off a platform high in the room; falling to the floor never kills.
+    const room = makeRoom((l) => put(l, 2, 4, '===='))
+    const p = standing(5 * CELL, 2)
     const events = walkOff(room, p)
-    events.push(...run(room, p, 120, IDLE))
-    expect(events.some((e) => e.kind === 'die' && e.cause === 'fall')).toBe(true)
+    events.push(...run(room, p, 200, IDLE))
+    expect(events.some((e) => e.kind === 'die')).toBe(false)
+    expect(p.onGround).toBe(true)
+    expect(p.y + P_H).toBe(14 * CELL)
   })
 
-  it('a fall of 4 rows is survivable', () => {
+  it('a multi-room plummet is still fatal', () => {
+    // simulate having already fallen a room's height (apexY far above) so the
+    // accumulated drop exceeds FALL_DEATH on landing.
     const room = makeRoom((l) => put(l, 10, 4, '===='))
     const p = standing(5 * CELL, 10)
     const events = walkOff(room, p)
+    p.apexY -= 14 * CELL // as if the fall began a full room higher up
     events.push(...run(room, p, 120, IDLE))
-    expect(events.some((e) => e.kind === 'die')).toBe(false)
-    expect(p.onGround).toBe(true)
+    expect(events.some((e) => e.kind === 'die' && e.cause === 'fall')).toBe(true)
   })
 
   it('conveyors drag even against held input', () => {
@@ -188,6 +193,64 @@ describe('willy physics', () => {
     const p = newPlayer(8 * CELL, 1 * CELL) // far above the floor
     settleOnGround(p, room)
     expect(p.onGround).toBe(false)
+  })
+
+  /** Highest point (smallest feetY) reached while walking, in feet-rows. */
+  function climb(room: Room, p: Player, frames: number, input: InputState): number {
+    let minFeet = p.y + P_H
+    for (let t = 1; t <= frames; t++) {
+      stepPlayer(p, t === 1 ? input : { ...input, jumpHit: false }, room, t)
+      minFeet = Math.min(minFeet, p.y + P_H)
+    }
+    return minFeet / CELL
+  }
+
+  it('walks up a bare ramp diagonal instead of wedging', () => {
+    // ascending '/' diagonal over open space, floor below — the only shape
+    // that climbs. Walk right from the floor and confirm Willy rises.
+    const room = makeRoom((l) => {
+      put(l, 13, 5, '/')
+      put(l, 12, 6, '/')
+      put(l, 11, 7, '/')
+      put(l, 10, 8, '/')
+    })
+    const p = standing(3 * CELL, 14)
+    const peak = climb(room, p, 200, inp({ right: true }))
+    // reached near the top of the 4-cell slope (feet up around row 10-11)
+    expect(peak).toBeLessThan(12)
+  })
+
+  it('walks back down a ramp without dying', () => {
+    const room = makeRoom((l) => {
+      put(l, 13, 5, '/')
+      put(l, 12, 6, '/')
+      put(l, 11, 7, '/')
+    })
+    const p = standing(3 * CELL, 14)
+    expect(climb(room, p, 120, inp({ right: true }))).toBeLessThan(12.5) // climbed
+    const events = run(room, p, 200, inp({ left: true })) // walk back down
+    expect(events.some((e) => e.kind === 'die')).toBe(false)
+  })
+
+  it('drops through a one-way platform on down+jump, but not through solid floor', () => {
+    // platform at row 8; floor at 14. Stand on the platform and drop through.
+    const room = makeRoom((l) => put(l, 8, 6, '======'))
+    const p = standing(8 * CELL, 8)
+    expect(p.y + P_H).toBe(8 * CELL)
+    stepPlayer(p, inp({ down: true, jump: true, jumpHit: true }), room, 1)
+    expect(p.onGround).toBe(false) // dropped off the platform
+    run(room, p, 90, inp({ down: true }))
+    expect(p.onGround).toBe(true)
+    expect(p.y + P_H).toBe(14 * CELL) // landed on the floor below
+
+    // on the solid floor, down+jump must NOT fall through — it just jumps.
+    let peak = p.y
+    for (let t = 1; t <= 120; t++) {
+      stepPlayer(p, t === 1 ? inp({ down: true, jump: true, jumpHit: true }) : IDLE, room, t)
+      peak = Math.min(peak, p.y)
+    }
+    expect(peak).toBeLessThan(14 * CELL - P_H) // rose (jumped), didn't sink
+    expect(p.y + P_H).toBe(14 * CELL) // landed back on the floor, never fell through
   })
 
   it('grace frames protect after respawn', () => {

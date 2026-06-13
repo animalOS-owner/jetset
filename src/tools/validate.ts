@@ -206,6 +206,21 @@ export function validateWorld(defs: RoomDef[], startId: string): Report {
     const room = rooms.get(def.id)
     if (!room) continue
 
+    // ----- ramps must be bare walkable diagonals. Solid fill in the cell a
+    // ramp climbs into (its high side) wedges Willy; a ramp stacked directly
+    // above another breaks the diagonal. Both make a slope unwalkable.
+    for (let r = 0; r < ROWS; r++)
+      for (let c = 0; c < COLS; c++) {
+        const t = tileAt(room, c, r)
+        if (t !== T.RAMP_UP && t !== T.RAMP_DOWN) continue
+        const high = t === T.RAMP_UP ? c + 1 : c - 1 // '/' high-right, '\' high-left
+        if (tileAt(room, high, r) === T.WALL)
+          errors.push(`${def.id}: ramp at ${c},${r} is blocked by fill at ${high},${r} (slopes must be bare diagonals)`)
+        const above = tileAt(room, c, r - 1)
+        if (above === T.RAMP_UP || above === T.RAMP_DOWN)
+          errors.push(`${def.id}: stacked ramp at ${c},${r} (one ramp per column on a diagonal)`)
+      }
+
     // ----- guardians sanity
     for (const g of def.guardians ?? []) {
       if (!(g.type in GUARDIAN_SIZE)) errors.push(`${def.id}: unknown guardian '${g.type}'`)
