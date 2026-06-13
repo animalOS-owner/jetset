@@ -1,6 +1,6 @@
 import {
   CELL, COLS, ROWS, ROOM_W, ROOM_H,
-  P_W, P_H, WALK, GRAVITY, JUMP_VY, MAX_FALL, FALL_DEATH, ROPE_REGRAB,
+  P_W, P_H, WALK, JUMP_VX, GRAVITY, JUMP_VY, MAX_FALL, FALL_DEATH, ROPE_REGRAB,
 } from './constants.ts'
 import { T, type InputState, type Player, type Room, type StepEvent } from './types.ts'
 import { isRamp, isSupport, rampSurface, tileAt } from './room.ts'
@@ -215,7 +215,8 @@ export function stepPlayer(p: Player, inp: InputState, room: Room, t: number): S
 
     if (inp.jumpHit) {
       p.vy = -JUMP_VY
-      p.airVx = dx
+      // A directional jump commits to JUMP_VX; a standing jump goes straight up.
+      p.airVx = dx === 0 ? 0 : Math.sign(dx) * JUMP_VX
       p.jumping = true
       p.onGround = false
       p.apexY = p.y
