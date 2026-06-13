@@ -752,13 +752,13 @@ export class Game {
 
   private renderMap(r: Renderer): void {
     const ctx = r.ctx
-    ctx.fillStyle = 'rgba(4,4,10,0.92)'
+    ctx.fillStyle = '#05050d'
     ctx.fillRect(0, 0, VIEW_W, VIEW_H)
     r.textCentered('THE MANSION', VIEW_W / 2, 8, '#ffe084', 2)
 
-    const cellW = 30
-    const cellH = 18
-    // lattice bounds from visited rooms
+    // --- lattice of discovered rooms, centred in the upper band ---
+    const cellW = 22
+    const cellH = 13
     let minX = 99, minY = 99, maxX = -99, maxY = -99
     for (const id of this.visited) {
       const d = getRoom(id).def
@@ -768,7 +768,7 @@ export class Game {
       maxY = Math.max(maxY, d.gy)
     }
     const ox = Math.round(VIEW_W / 2 - ((maxX + minX + 1) * cellW) / 2)
-    const oy = Math.round(170 - ((maxY + minY + 1) * cellH) / 2)
+    const oy = Math.round(88 - ((maxY + minY + 1) * cellH) / 2)
     for (const id of this.visited) {
       const d = getRoom(id).def
       const zone = ZONES[d.zone]
@@ -780,11 +780,37 @@ export class Game {
       ctx.fillRect(x, y, cellW - 2, cellH - 2)
       ctx.globalAlpha = 1
     }
-    r.textCentered(this.room.def.name.toUpperCase(), VIEW_W / 2, VIEW_H - 40, '#ffffff', 1)
+
+    // --- legend: only zones the player has actually set foot in, so the
+    //     colours mean something and it doubles as a discovery checklist ---
+    const seen = Object.keys(ZONES).filter((z) => {
+      for (const id of this.visited) if (getRoom(id).def.zone === z) return true
+      return false
+    })
+    const perCol = Math.ceil(seen.length / 2)
+    const colW = 172
+    const lx0 = Math.round(VIEW_W / 2 - (perCol < seen.length ? colW : colW / 2))
+    const legendTop = 162
+    seen.forEach((z, i) => {
+      const x = lx0 + Math.floor(i / perCol) * colW
+      const y = legendTop + (i % perCol) * 12
+      const here = this.room.def.zone === z
+      ctx.fillStyle = ZONES[z].banner
+      ctx.fillRect(x, y, 8, 8)
+      r.text(
+        ZONES[z].title.replace(/^THE /i, '').toUpperCase(),
+        x + 12, y + 1, here ? '#ffffff' : '#b8b8c4', 1,
+      )
+    })
+
+    // --- footer: where you are, and overall progress ---
+    r.textCentered(this.room.def.name.toUpperCase(), VIEW_W / 2, VIEW_H - 42, '#ffffff', 1)
+    const pct = Math.floor((this.collected.size / Math.max(1, TOTAL_ITEMS)) * 100)
     r.textCentered(
-      `${this.visited.size} ROOMS DISCOVERED`,
-      VIEW_W / 2, VIEW_H - 24, '#a8a8b8', 1,
+      `${this.visited.size} ROOMS    ${this.collected.size}/${TOTAL_ITEMS} ITEMS    ${pct}% TIDY`,
+      VIEW_W / 2, VIEW_H - 26, '#a8a8b8', 1,
     )
+    r.textCentered('TAB / ESC TO CLOSE', VIEW_W / 2, VIEW_H - 12, '#6a6a7e', 1)
   }
 
   private renderTitle(r: Renderer): void {
