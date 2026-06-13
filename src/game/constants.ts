@@ -23,6 +23,10 @@ export const SPRITE_OY = -2
 // Physics (px per frame at 60fps). The jump arc is committed at takeoff:
 // horizontal velocity is locked, exactly like the original.
 export const WALK = 1.25
+// A directional jump locks in this horizontal speed (faster than a walk). The
+// committed arc must cover the mansion's standard climb: 2 cells up and up to
+// 3 cells across in a single jump, the envelope the world is authored against.
+export const JUMP_VX = 1.9
 export const GRAVITY = 0.18
 export const JUMP_VY = 3.65 // apex ~35px: lands on platforms 2 cells up, never 3
 export const MAX_FALL = 4
