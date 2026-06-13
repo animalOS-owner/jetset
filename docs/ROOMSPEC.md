@@ -43,9 +43,10 @@ export const MYZONE: RoomDef[] = [
   wedges Willy and makes the slope unwalkable. For a solid-looking hill use
   `/` up → short `=` flat top → `\` down, all bare. The validator rejects
   blocking fill and stacked ramps.
-- **Falls within a room are survivable** (only a plummet through several
-  rooms is fatal). Willy descends a platform stack with **down + jump** to
-  drop through one-way platforms. Still avoid forcing blind multi-room drops.
+- **Falling more than ~9 rows is fatal** (about 2/3 of the screen). Short
+  platform hops survive; to climb down a stack use **down + jump** to drop
+  through one-way platforms. Don't force a descent longer than ~9 rows with no
+  platforms or rope to break it.
 - Conveyors drag Willy; he can only escape by jumping.
 - Guardians kill on touch; they patrol on fixed paths (`axis` h/v, cells
   `a`..`b` inclusive, fixed `at` = top row for h / column for v, `speed`

@@ -42,7 +42,8 @@ A gamepad works too. Progress autosaves on every room change.
   drops you straight down.
 - To climb down a stack of platforms, hold **Down + Jump** to drop through the
   one-way platform you're standing on and land on the next one below.
-- A fall within a room is survivable; only a plummet through several rooms kills.
+- Falling more than about two-thirds of the screen is fatal — use drop-through
+  to climb down safely rather than leaping off high ledges.
 - Guardians patrol fixed deterministic paths. Learn them.
 - Death returns you to where you entered the room. Unlike the original,
   three quick deaths in one room rewinds you to the previous room instead of

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { parseRoom } from '../src/game/room.ts'
 import { newPlayer, stepPlayer, settleOnGround } from '../src/game/physics.ts'
-import { CELL, P_H, WALK } from '../src/game/constants.ts'
+import { CELL, P_H, WALK, FALL_DEATH } from '../src/game/constants.ts'
 import type { InputState, Player, Room, RoomDef, StepEvent } from '../src/game/types.ts'
 
 const IDLE: InputState = {
@@ -108,25 +108,26 @@ describe('willy physics', () => {
     expect(p.x).toBe(xAtFall) // no horizontal drift while falling
   })
 
-  it('a full-room-height fall is survivable', () => {
-    // step off a platform high in the room; falling to the floor never kills.
-    const room = makeRoom((l) => put(l, 2, 4, '===='))
-    const p = standing(5 * CELL, 2)
+  const FALL_ROWS = FALL_DEATH / CELL // fatal beyond this many rows
+
+  it('a fall a couple rows short of the limit is survivable', () => {
+    const landRow = 14
+    const platRow = landRow - (FALL_ROWS - 2) // ~7-row drop at the default limit
+    const room = makeRoom((l) => put(l, platRow, 4, '===='))
+    const p = standing(5 * CELL, platRow)
     const events = walkOff(room, p)
     events.push(...run(room, p, 200, IDLE))
     expect(events.some((e) => e.kind === 'die')).toBe(false)
     expect(p.onGround).toBe(true)
-    expect(p.y + P_H).toBe(14 * CELL)
+    expect(p.y + P_H).toBe(landRow * CELL)
   })
 
-  it('a multi-room plummet is still fatal', () => {
-    // simulate having already fallen a room's height (apexY far above) so the
-    // accumulated drop exceeds FALL_DEATH on landing.
-    const room = makeRoom((l) => put(l, 10, 4, '===='))
-    const p = standing(5 * CELL, 10)
+  it('a fall past the limit is fatal', () => {
+    const platRow = 14 - (FALL_ROWS + 2) // ~11-row drop at the default limit
+    const room = makeRoom((l) => put(l, platRow, 4, '===='))
+    const p = standing(5 * CELL, platRow)
     const events = walkOff(room, p)
-    p.apexY -= 14 * CELL // as if the fall began a full room higher up
-    events.push(...run(room, p, 120, IDLE))
+    events.push(...run(room, p, 200, IDLE))
     expect(events.some((e) => e.kind === 'die' && e.cause === 'fall')).toBe(true)
   })
 

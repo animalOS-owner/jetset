@@ -30,10 +30,12 @@ export const JUMP_VX = 1.9
 export const GRAVITY = 0.18
 export const JUMP_VY = 3.65 // apex ~35px: lands on platforms 2 cells up, never 3
 export const MAX_FALL = 4
-// Any fall within a single room survives (the playfield is ~13 cells tall);
-// only a plummet through multiple rooms is fatal. Keeps descent fair — paired
-// with drop-through platforms (down+jump) for controlled stepping-down.
-export const FALL_DEATH = 14 * CELL
+// A fall of more than ~2/3 of the screen is fatal (the JSW "don't fall off high
+// places" hazard). Short platform hops survive, and drop-through platforms
+// (down+jump) give a safe controlled descent — so this is a hazard, not a trap.
+// 9 cells is the lowest value that keeps every room reachable (see
+// tests/completability.test.ts); lower it and the vault/sewer cluster strands.
+export const FALL_DEATH = 9 * CELL
 
 export const START_LIVES = 8
 export const SPAWN_GRACE = 50 // frames of invulnerability after a respawn
