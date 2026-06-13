@@ -1,5 +1,5 @@
 import { ALL_ROOMS } from './rooms/index.ts'
-import { carveServiceShaft } from './shaft.ts'
+import { carveServiceShaft, carveConnectors } from './shaft.ts'
 import { parseRoom } from '../game/room.ts'
 import type { Dir, Room, RoomDef } from '../game/types.ts'
 
@@ -7,8 +7,9 @@ import type { Dir, Room, RoomDef } from '../game/types.ts'
 // are derived purely from adjacency — geometry cannot be miswired.
 //
 // carveServiceShaft adds a verified vertical route from the ground floor to the
-// bed (see src/content/shaft.ts). Remove it to revert to the raw room files.
-export const ROOM_DEFS: RoomDef[] = carveServiceShaft(ALL_ROOMS)
+// bed; carveConnectors reaches the eight stranded extremity rooms (see
+// src/content/shaft.ts). Remove either to revert to the raw room files.
+export const ROOM_DEFS: RoomDef[] = carveConnectors(carveServiceShaft(ALL_ROOMS))
 
 const byId = new Map<string, RoomDef>()
 const byCoord = new Map<string, RoomDef>()

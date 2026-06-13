@@ -15,12 +15,15 @@ describe('completability (real physics)', () => {
     expect(rep.bedReachable).toBe(true)
   })
 
-  it('a substantial part of the mansion is reachable', () => {
-    // Coverage is informational; the hard guarantee above is bed-reachability.
+  it('every room is reachable under real physics', () => {
+    // The service shaft + cluster connectors (src/content/shaft.ts) bring the
+    // whole mansion into reach. Lock that in: a new room with no honest route
+    // fails here. If it ever does, give it a connector or a real climb.
+    const unreached = ROOM_DEFS.filter((d) => !rep.reachedRooms.has(d.id)).map((d) => d.id)
     console.log(
       `real-physics reach: ${rep.reachedRooms.size}/${ROOM_DEFS.length} rooms, ` +
         `${rep.collectableItems.size}/${rep.totalItems} items`,
     )
-    expect(rep.reachedRooms.size).toBeGreaterThan(40)
+    expect(unreached).toEqual([])
   })
 })

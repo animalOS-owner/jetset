@@ -23,6 +23,16 @@ export function standable(room: Room, c: number, r: number): boolean {
   return isSupport(t) || isRamp(t)
 }
 
+/** Can Willy actually rest at (col,row)? A fresh spawn there must settle and
+ *  stay grounded. Filters "phantom" cells where a walk is only momentarily
+ *  edge-supported beside a hole — without this the analyser stops at a hole's
+ *  lip and never registers the fall through it. */
+function stableStand(room: Room, col: number, row: number): boolean {
+  const q = newPlayer(standX(col), row * CELL - P_H)
+  settleOnGround(q, room)
+  return q.onGround
+}
+
 interface World {
   rooms: Map<string, Room>
   byCoord: Map<string, RoomDef>
@@ -70,8 +80,11 @@ function settle(world: World, room: Room, p: Player, hold: InputState, depth: nu
         return { ...out, items: items.concat(out.items) }
       }
     }
-    if (p.onGround && f > 0)
-      return { kind: 'stand', roomId: room.def.id, col: cellCol(p), row: (p.y + P_H) / CELL, items }
+    if (p.onGround && f > 0) {
+      const c = cellCol(p), r = (p.y + P_H) / CELL
+      if (stableStand(room, c, r))
+        return { kind: 'stand', roomId: room.def.id, col: c, row: r, items }
+    }
   }
   return { kind: 'die', items }
 }
@@ -116,7 +129,8 @@ export function doMove(world: World, roomId: string, col: number, row: number, m
     }
     if (p.onGround && f > 0) {
       const c = cellCol(p), r = (p.y + P_H) / CELL
-      if (`${c},${r}` !== startKey) return { kind: 'stand', roomId, col: c, row: r, items }
+      if (`${c},${r}` !== startKey && stableStand(room, c, r))
+        return { kind: 'stand', roomId, col: c, row: r, items }
     }
   }
   return { kind: 'die', items }

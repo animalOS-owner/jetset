@@ -102,3 +102,152 @@ export function carveServiceShaft(defs: RoomDef[]): RoomDef[] {
 
   return out
 }
+
+// ---------------------------------------------------------------------------
+// Cluster connectors.
+//
+// Beyond the main shaft, eight rooms at the mansion's extremities (the yacht
+// mast-top, the left rooftops, the tower belfry, the left sewers) sit behind
+// up-shafts the real physics can't climb or behind lethal floors. Each is
+// carved a tiny one-column connector from its already-reachable neighbour:
+// an up-chimney (rungs + ceiling hole + catch rung), or a drop-in (a floor
+// hole above, a high catch rung below so the fall is survivable). Verified by
+// tests/completability.test.ts. Like the shaft, deleting carveConnectors() in
+// world.ts reverts the rooms exactly.
+// ---------------------------------------------------------------------------
+
+function clearCol(): Record<number, string> {
+  const c: Record<number, string> = {}
+  for (let r = 0; r <= 15; r++) c[r] = '.'
+  return c
+}
+
+// Lower room of an up-chimney: ladder rungs to a launch under the ceiling hole.
+function chimneyLower(): Record<number, string> {
+  const c = clearCol()
+  for (let r = 1; r <= 13; r += 2) c[r] = '='
+  c[14] = '#'
+  c[15] = '#' // keep the floor solid: Willy climbs in off it
+  return c // row 0 stays open — the ceiling hole into the room above
+}
+// Upper (target) room of an up-chimney: catch rung on arrival, rungs to climb
+// in, ceiling kept solid (nothing above these rooms).
+function chimneyUpper(): Record<number, string> {
+  const c = clearCol()
+  for (let r = 1; r <= 13; r += 2) c[r] = '='
+  c[0] = '#'
+  c[14] = '.' // floor hole Willy rises through
+  c[15] = '=' // catch rung
+  return c
+}
+// One column of a drop-in's upper (reached) room: a floor hole to step into,
+// ceiling kept solid, a rung to climb back out.
+function dropUpper(): Record<number, string> {
+  const c = clearCol()
+  c[0] = '#'
+  c[13] = '='
+  c[14] = '.'
+  c[15] = '.'
+  return c
+}
+// One column of a drop-in's lower (target) room: open ceiling the drop comes
+// through, a high catch rung so the fall is short, a solid landing floor.
+function dropLower(): Record<number, string> {
+  const c = clearCol()
+  c[3] = '=' // high catch rung near the ceiling
+  c[14] = '#'
+  c[15] = '#' // solid landing floor (never water)
+  return c
+}
+
+const cellAt = (grid: string, col: number, row: number): string => {
+  const lines = grid.split('\n').filter((l) => l.trim().length > 0)
+  return lines[row]?.[col] ?? '#'
+}
+
+/** Can Willy walk along the floor (row 14) from `col` to a side edge without
+ *  crossing a hole or water? If so the landing column reaches a side door and
+ *  isn't a dead-end pocket. */
+function floorReachesSide(grid: string, col: number): boolean {
+  let left = true
+  for (let c = col; c >= 1; c--) if (cellAt(grid, c, 14) !== '#') { left = false; break }
+  let right = true
+  for (let c = col; c <= 30; c++) if (cellAt(grid, c, 14) !== '#') { right = false; break }
+  return left || right
+}
+
+/** Leftmost column c (2..28) where a 2-wide drop fits: columns c and c+1 are
+ *  fresh solid ceiling/floor in both rooms and the landing reaches a side door,
+ *  so Willy falls cleanly through and isn't stranded in a pocket. */
+function dropColumn(upper: string, lower: string): number {
+  for (const c of [24, 25, 26, 23, 27, 12, 13, 11, 14, 8, 9, 2, 3, 4, 28]) {
+    const ok = [c, c + 1].every(
+      (x) =>
+        cellAt(upper, x, 14) === '#' &&
+        cellAt(lower, x, 0) === '#' &&
+        cellAt(lower, x, 14) === '#' &&
+        floorReachesSide(lower, x),
+    )
+    if (ok) return c
+  }
+  return -1
+}
+
+/** First mid column (2..29) where a connector can't collide with an existing
+ *  shaft/door: the lower room (floor kept, ceiling opened) must be solid at
+ *  both row 0 and row 14, and the upper room (floor opened) solid at row 14.
+ *  The upper ceiling is set solid by the carve, so it needn't start solid.
+ *  When `landRoom` is given, the chosen column's floor there must also reach a
+ *  side door, so a drop-in never strands Willy in an isolated floor pocket. */
+function safeColumn(lower: string, upper: string, landRoom?: string): number {
+  for (const c of [13, 14, 12, 15, 11, 9, 8, 22, 23, 7, 2, 3, 4, 25, 26, 27, 28, 29]) {
+    if (
+      cellAt(lower, c, 0) === '#' && cellAt(lower, c, 14) === '#' &&
+      cellAt(upper, c, 14) === '#' &&
+      (!landRoom || floorReachesSide(landRoom, c))
+    ) return c
+  }
+  return -1
+}
+
+// [reachedNeighbour, strandedRoom, 'up' | 'drop']
+const CONNECTORS: [string, string, 'up' | 'drop'][] = [
+  ['crows-nest', 'mast-top', 'up'],
+  ['mind-your-head', 'west-gable', 'up'],
+  ['boxes-of-regret', 'loose-slates', 'up'],
+  ['cobweb-suite', 'sweeps-lament', 'up'],
+  ['counterweights', 'the-belfry', 'up'],
+  ['the-vaults', 'storm-drain', 'drop'],
+  ['family-silver', 'ankle-deep', 'drop'],
+  ['hundred-barrels', 'grate-escape', 'drop'],
+]
+
+export function carveConnectors(defs: RoomDef[]): RoomDef[] {
+  const out = defs.map((d) => ({ ...d }))
+  const find = (id: string) => out.find((d) => d.id === id)
+
+  for (const [reachedId, strandedId, kind] of CONNECTORS) {
+    const reached = find(reachedId)
+    const stranded = find(strandedId)
+    if (!reached || !stranded) continue
+    // up: lower=reached, upper=stranded.  drop: upper=reached, lower=stranded.
+    const lower = kind === 'up' ? reached : stranded
+    const upper = kind === 'up' ? stranded : reached
+    if (kind === 'up') {
+      const col = safeColumn(lower.grid, upper.grid)
+      if (col < 0) continue
+      lower.grid = setColumn(lower.grid, col, chimneyLower())
+      upper.grid = setColumn(upper.grid, col, chimneyUpper())
+    } else {
+      // Drop-in: a 2-wide hole (1-wide is narrower than Willy's hitbox, so he
+      // strides over it without falling), landing in a door-connected pocket.
+      const col = dropColumn(upper.grid, lower.grid)
+      if (col < 0) continue
+      for (const c of [col, col + 1]) {
+        upper.grid = setColumn(upper.grid, c, dropUpper())
+        lower.grid = setColumn(lower.grid, c, dropLower())
+      }
+    }
+  }
+  return out
+}
