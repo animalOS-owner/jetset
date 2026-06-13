@@ -1,11 +1,14 @@
 import { ALL_ROOMS } from './rooms/index.ts'
+import { carveServiceShaft } from './shaft.ts'
 import { parseRoom } from '../game/room.ts'
 import type { Dir, Room, RoomDef } from '../game/types.ts'
 
 // The world lattice: every room occupies one (gx, gy) coordinate and exits
 // are derived purely from adjacency — geometry cannot be miswired.
-
-export const ROOM_DEFS: RoomDef[] = ALL_ROOMS
+//
+// carveServiceShaft adds a verified vertical route from the ground floor to the
+// bed (see src/content/shaft.ts). Remove it to revert to the raw room files.
+export const ROOM_DEFS: RoomDef[] = carveServiceShaft(ALL_ROOMS)
 
 const byId = new Map<string, RoomDef>()
 const byCoord = new Map<string, RoomDef>()
