@@ -52,6 +52,7 @@ const SAVE_KEY = 'jetset-manor-v1'
 export class Game {
   mode: Mode = 'title'
   private menuIdx = 0
+  private pauseIdx = 0
   private practice = false
 
   private room!: Room
@@ -278,7 +279,7 @@ export class Game {
         if (--this.deathTimer <= 0) this.respawn()
         break
       case 'paused':
-        if (this.input.hit('pause') || this.input.hit('confirm')) this.mode = 'playing'
+        this.updatePauseMenu()
         break
       case 'map':
         if (this.input.hit('map') || this.input.hit('pause')) this.mode = 'playing'
@@ -325,9 +326,82 @@ export class Game {
     }
   }
 
+  // PAUSE menu rows, in display order.
+  private static PAUSE_ROWS = 5
+  private static ROW_VOLUME = 3
+
+  private updatePauseMenu(): void {
+    if (this.input.hit('pause')) {
+      this.mode = 'playing'
+      return
+    }
+    const n = Game.PAUSE_ROWS
+    if (this.input.hit('up')) {
+      this.pauseIdx = (this.pauseIdx + n - 1) % n
+      this.chip.sfx('menu')
+    }
+    if (this.input.hit('down')) {
+      this.pauseIdx = (this.pauseIdx + 1) % n
+      this.chip.sfx('menu')
+    }
+    // Left/Right adjust the volume slider when that row is highlighted.
+    if (this.pauseIdx === Game.ROW_VOLUME) {
+      if (this.input.hit('left')) {
+        this.chip.adjustVolume(-0.1)
+        this.chip.sfx('menu')
+      }
+      if (this.input.hit('right')) {
+        this.chip.adjustVolume(0.1)
+        this.chip.sfx('menu')
+      }
+    }
+    if (this.input.hit('confirm') || this.input.hit('jump')) {
+      switch (this.pauseIdx) {
+        case 0: // RESUME
+          this.chip.sfx('menu')
+          this.mode = 'playing'
+          break
+        case 1: // RESTART ROOM
+          this.chip.sfx('menu')
+          this.restartRoom()
+          break
+        case 2: // MUSIC ON/OFF
+          this.chip.toggleMute()
+          this.chip.sfx('menu')
+          break
+        case Game.ROW_VOLUME: // VOLUME — adjust with Left/Right
+          break
+        case 4: // QUIT TO TITLE
+          this.chip.sfx('menu')
+          this.quitToTitle()
+          break
+      }
+    }
+  }
+
+  /** Respawn at the room's entry point — a free safety valve if Willy is stuck
+   *  or just wants a clean run at the room. Mirrors a death respawn, no life lost. */
+  private restartRoom(): void {
+    this.player = newPlayer(this.entry.x, this.entry.y)
+    settleOnGround(this.player, this.room)
+    this.player.grace = SPAWN_GRACE
+    this.player.entryGrace = ENTRY_GRACE
+    this.particles = []
+    this.mode = 'playing'
+  }
+
+  /** Leave to the title screen. Progress is saved, so CONTINUE resumes here. */
+  private quitToTitle(): void {
+    this.save()
+    this.mode = 'title'
+    this.menuIdx = 0
+    this.music()
+  }
+
   private updatePlaying(): void {
     if (this.input.hit('pause')) {
       this.mode = 'paused'
+      this.pauseIdx = 0
       return
     }
     if (this.input.hit('map')) {
@@ -436,10 +510,7 @@ export class Game {
         break
       case 'paused':
         this.renderRoomAndHud(r)
-        r.ctx.fillStyle = 'rgba(0,0,0,0.55)'
-        r.ctx.fillRect(0, 0, VIEW_W, ROOM_H)
-        r.textCentered('PAUSED', VIEW_W / 2, 116, '#ffffff', 3)
-        r.textCentered('ESC TO RESUME', VIEW_W / 2, 150, '#a0a0b0', 1)
+        this.renderPauseMenu(r)
         break
       default:
         this.renderRoomAndHud(r)
@@ -806,15 +877,59 @@ export class Game {
     )
   }
 
+  private renderPauseMenu(r: Renderer): void {
+    const ctx = r.ctx
+    ctx.fillStyle = 'rgba(4,4,12,0.72)'
+    ctx.fillRect(0, 0, VIEW_W, ROOM_H)
+    r.textCentered('PAUSED', VIEW_W / 2, 30, '#ffffff', 3)
+
+    const rows = [
+      'RESUME',
+      'RESTART ROOM',
+      `MUSIC: ${this.chip.muted ? 'OFF' : 'ON'}`,
+      'VOLUME',
+      'QUIT TO TITLE',
+    ]
+    const baseY = 84
+    const stepY = 22
+    rows.forEach((label, i) => {
+      const sel = i === this.pauseIdx
+      const blink = sel && Math.floor(this.globalT / 20) % 2 === 0
+      const color = blink ? '#ffffff' : sel ? '#ffe084' : '#9a9ab0'
+      const y = baseY + i * stepY
+      r.textCentered(sel ? `> ${label} <` : label, VIEW_W / 2, y, color, 1)
+      if (i === Game.ROW_VOLUME) {
+        // a 10-segment loudness bar beneath the VOLUME label
+        const segs = 10
+        const filled = Math.round(this.chip.volume * segs)
+        const bw = 8
+        const bh = 7
+        const gap = 3
+        const totalW = segs * (bw + gap) - gap
+        const bx = Math.round(VIEW_W / 2 - totalW / 2)
+        const by = y + 10
+        for (let s = 0; s < segs; s++) {
+          ctx.fillStyle = s < filled ? (sel ? '#ffe084' : '#9a9ab0') : '#2a2a40'
+          ctx.fillRect(bx + s * (bw + gap), by, bw, bh)
+        }
+      }
+    })
+
+    r.textCentered(
+      'UP/DOWN MOVE   LEFT/RIGHT VOLUME   ESC RESUME',
+      VIEW_W / 2, ROOM_H - 14, '#7a7a8e', 1,
+    )
+  }
+
   private renderMap(r: Renderer): void {
     const ctx = r.ctx
-    ctx.fillStyle = 'rgba(4,4,10,0.92)'
+    ctx.fillStyle = '#05050d'
     ctx.fillRect(0, 0, VIEW_W, VIEW_H)
     r.textCentered('THE MANSION', VIEW_W / 2, 8, '#ffe084', 2)
 
-    const cellW = 30
-    const cellH = 18
-    // lattice bounds from visited rooms
+    // --- lattice of discovered rooms, centred in the upper band ---
+    const cellW = 22
+    const cellH = 13
     let minX = 99, minY = 99, maxX = -99, maxY = -99
     for (const id of this.visited) {
       const d = getRoom(id).def
@@ -824,7 +939,7 @@ export class Game {
       maxY = Math.max(maxY, d.gy)
     }
     const ox = Math.round(VIEW_W / 2 - ((maxX + minX + 1) * cellW) / 2)
-    const oy = Math.round(170 - ((maxY + minY + 1) * cellH) / 2)
+    const oy = Math.round(88 - ((maxY + minY + 1) * cellH) / 2)
     for (const id of this.visited) {
       const d = getRoom(id).def
       const zone = ZONES[d.zone]
@@ -836,11 +951,37 @@ export class Game {
       ctx.fillRect(x, y, cellW - 2, cellH - 2)
       ctx.globalAlpha = 1
     }
-    r.textCentered(this.room.def.name.toUpperCase(), VIEW_W / 2, VIEW_H - 40, '#ffffff', 1)
+
+    // --- legend: only zones the player has actually set foot in, so the
+    //     colours mean something and it doubles as a discovery checklist ---
+    const seen = Object.keys(ZONES).filter((z) => {
+      for (const id of this.visited) if (getRoom(id).def.zone === z) return true
+      return false
+    })
+    const perCol = Math.ceil(seen.length / 2)
+    const colW = 172
+    const lx0 = Math.round(VIEW_W / 2 - (perCol < seen.length ? colW : colW / 2))
+    const legendTop = 162
+    seen.forEach((z, i) => {
+      const x = lx0 + Math.floor(i / perCol) * colW
+      const y = legendTop + (i % perCol) * 12
+      const here = this.room.def.zone === z
+      ctx.fillStyle = ZONES[z].banner
+      ctx.fillRect(x, y, 8, 8)
+      r.text(
+        ZONES[z].title.replace(/^THE /i, '').toUpperCase(),
+        x + 12, y + 1, here ? '#ffffff' : '#b8b8c4', 1,
+      )
+    })
+
+    // --- footer: where you are, and overall progress ---
+    r.textCentered(this.room.def.name.toUpperCase(), VIEW_W / 2, VIEW_H - 42, '#ffffff', 1)
+    const pct = Math.floor((this.collected.size / Math.max(1, TOTAL_ITEMS)) * 100)
     r.textCentered(
-      `${this.visited.size} ROOMS DISCOVERED`,
-      VIEW_W / 2, VIEW_H - 24, '#a8a8b8', 1,
+      `${this.visited.size} ROOMS    ${this.collected.size}/${TOTAL_ITEMS} ITEMS    ${pct}% TIDY`,
+      VIEW_W / 2, VIEW_H - 26, '#a8a8b8', 1,
     )
+    r.textCentered('TAB / ESC TO CLOSE', VIEW_W / 2, VIEW_H - 12, '#6a6a7e', 1)
   }
 
   private renderTitle(r: Renderer): void {
@@ -957,9 +1098,9 @@ export class Game {
     ctx.fillStyle = '#06060e'
     ctx.fillRect(0, 255, VIEW_W, 2)
 
-    r.textCentered('ARROWS/WASD MOVE   Z/SPACE JUMP', VIEW_W / 2, 268, '#7a7a8e', 1)
-    r.textCentered('DOWN + JUMP DROPS THROUGH PLATFORMS', VIEW_W / 2, 280, '#9a9ab0', 1)
-    r.textCentered('ESC PAUSE   TAB MAP   N MUSIC', VIEW_W / 2, 292, '#7a7a8e', 1)
+    r.textCentered('ARROWS/WASD MOVE   Z/SPACE JUMP', VIEW_W / 2, 256, '#7a7a8e', 1)
+    r.textCentered('DOWN + JUMP DROPS THROUGH PLATFORMS', VIEW_W / 2, 268, '#9a9ab0', 1)
+    r.textCentered('ESC PAUSE   TAB MAP   N MUSIC', VIEW_W / 2, 280, '#7a7a8e', 1)
     r.textCentered(
       `M: PRACTICE MODE ${this.practice ? 'ON' : 'OFF'}`,
       VIEW_W / 2, 304, this.practice ? '#8ae08a' : '#55556a', 1,
