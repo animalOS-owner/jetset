@@ -1,5 +1,6 @@
-// Visual identity of each zone: colors, wall texture, hazard style, and
-// what the A/B/C decoration glyphs mean there.
+// Visual identity of each zone: colors, wall texture, hazard style, the A/B/C
+// decoration glyphs, and — for the graphic overhaul — the backdrop scene,
+// ambient weather, and lighting mood that drive the atmosphere systems.
 
 export type WallStyle =
   | 'brick' | 'stone' | 'planks' | 'panel' | 'rock' | 'slate' | 'timber' | 'tile'
@@ -8,6 +9,15 @@ export type DecoKind =
   | 'barrel' | 'portrait' | 'bookshelf' | 'torch' | 'window' | 'clock'
   | 'fern' | 'anchor' | 'shell' | 'chimney' | 'lamp' | 'cobweb' | 'crate'
   | 'armour' | 'pipe' | 'candle'
+
+/** Backdrop painter used for a zone's room background. */
+export type SceneKind =
+  | 'seaside' | 'garden' | 'cellar' | 'sewer' | 'interior'
+  | 'attic' | 'rooftop' | 'tower' | 'bedroom'
+
+/** Drifting ambient particle weather layered over a room. */
+export type AmbientKind =
+  | 'none' | 'dust' | 'embers' | 'snow' | 'drip' | 'spray' | 'pollen' | 'rain'
 
 export interface ZoneStyle {
   title: string
@@ -20,7 +30,21 @@ export interface ZoneStyle {
   water: string
   deco: [DecoKind, DecoKind, DecoKind]
   banner: string
+  // --- overhaul: atmosphere ---
+  scene: SceneKind
+  /** 0 = full daylight, 1 = pitch black; drives the lighting pass. */
+  dark: number
+  /** tint of light pools cast by emitters in this zone (#rrggbb). */
+  light: string
+  /** tint of the darkness itself (#rrggbb), usually a deep version of the sky. */
+  shadow: string
+  ambient: AmbientKind
 }
+
+/** Deco kinds that cast warm light in a dark room. */
+export const WARM_EMITTERS = new Set<DecoKind>(['torch', 'candle', 'lamp'])
+/** Deco kinds that cast cool light (moonlight/glow from outside). */
+export const COOL_EMITTERS = new Set<DecoKind>(['window'])
 
 export const ZONES: Record<string, ZoneStyle> = {
   beach: {
@@ -32,6 +56,7 @@ export const ZONES: Record<string, ZoneStyle> = {
     water: '#1f6fb2',
     deco: ['anchor', 'shell', 'crate'],
     banner: '#ffe9a8',
+    scene: 'seaside', dark: 0, light: '#fff2c8', shadow: '#16344f', ambient: 'spray',
   },
   gardens: {
     title: 'The Gardens',
@@ -42,6 +67,7 @@ export const ZONES: Record<string, ZoneStyle> = {
     water: '#2f7fae',
     deco: ['fern', 'lamp', 'crate'],
     banner: '#d2f5b0',
+    scene: 'garden', dark: 0.04, light: '#fff0bc', shadow: '#123a26', ambient: 'pollen',
   },
   cellars: {
     title: 'The Cellars',
@@ -52,6 +78,7 @@ export const ZONES: Record<string, ZoneStyle> = {
     water: '#3a5a4a',
     deco: ['barrel', 'torch', 'cobweb'],
     banner: '#e8b86a',
+    scene: 'cellar', dark: 0.82, light: '#ffb24a', shadow: '#070509', ambient: 'dust',
   },
   sewers: {
     title: 'The Sewers',
@@ -62,6 +89,7 @@ export const ZONES: Record<string, ZoneStyle> = {
     water: '#4a7a2a',
     deco: ['pipe', 'torch', 'cobweb'],
     banner: '#a8e088',
+    scene: 'sewer', dark: 0.74, light: '#ffac4a', shadow: '#04100a', ambient: 'drip',
   },
   westwing: {
     title: 'The West Wing',
@@ -72,6 +100,7 @@ export const ZONES: Record<string, ZoneStyle> = {
     water: '#355a8a',
     deco: ['barrel', 'window', 'crate'],
     banner: '#ffd9a0',
+    scene: 'interior', dark: 0.5, light: '#ffcf86', shadow: '#16101e', ambient: 'embers',
   },
   halls: {
     title: 'The Grand Halls',
@@ -82,6 +111,7 @@ export const ZONES: Record<string, ZoneStyle> = {
     water: '#355a8a',
     deco: ['portrait', 'candle', 'clock'],
     banner: '#f5d2ee',
+    scene: 'interior', dark: 0.46, light: '#ffdf9c', shadow: '#1a0f22', ambient: 'dust',
   },
   eastwing: {
     title: 'The East Wing',
@@ -92,6 +122,7 @@ export const ZONES: Record<string, ZoneStyle> = {
     water: '#355a8a',
     deco: ['bookshelf', 'window', 'clock'],
     banner: '#cfe0ff',
+    scene: 'interior', dark: 0.42, light: '#cfe2ff', shadow: '#0c1426', ambient: 'dust',
   },
   attics: {
     title: 'The Attics',
@@ -102,6 +133,7 @@ export const ZONES: Record<string, ZoneStyle> = {
     water: '#355a8a',
     deco: ['crate', 'cobweb', 'lamp'],
     banner: '#e8cf9a',
+    scene: 'attic', dark: 0.62, light: '#ffd58a', shadow: '#0d0a08', ambient: 'dust',
   },
   rooftops: {
     title: 'The Rooftops',
@@ -112,6 +144,7 @@ export const ZONES: Record<string, ZoneStyle> = {
     water: '#355a8a',
     deco: ['chimney', 'window', 'lamp'],
     banner: '#d8d2f0',
+    scene: 'rooftop', dark: 0.34, light: '#dce6ff', shadow: '#0a0e1c', ambient: 'rain',
   },
   tower: {
     title: 'The Tower',
@@ -122,6 +155,7 @@ export const ZONES: Record<string, ZoneStyle> = {
     water: '#355a8a',
     deco: ['armour', 'torch', 'window'],
     banner: '#b8e8f0',
+    scene: 'tower', dark: 0.46, light: '#cfeaff', shadow: '#07060f', ambient: 'snow',
   },
   finale: {
     title: 'The Master Bedroom',
@@ -132,5 +166,6 @@ export const ZONES: Record<string, ZoneStyle> = {
     water: '#355a8a',
     deco: ['portrait', 'candle', 'window'],
     banner: '#ffd2f0',
+    scene: 'bedroom', dark: 0.4, light: '#ffe0b0', shadow: '#160c1c', ambient: 'dust',
   },
 }
