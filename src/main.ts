@@ -21,3 +21,6 @@ startLoop(
   () => game.update(),
   () => game.render(renderer),
 )
+
+// Dev-only: expose the game for quick room warping during visual QA.
+if (import.meta.env.DEV) (globalThis as Record<string, unknown>).game = game
