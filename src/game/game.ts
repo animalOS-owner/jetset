@@ -7,12 +7,24 @@ import { T, type Dir, type Player, type Room } from './types.ts'
 import { newPlayer, stepPlayer, settleOnGround } from './physics.ts'
 import { guardianPos, arrowPos, ropePoint } from './guardians.ts'
 import { getRoom, neighborOf, START, TOTAL_ITEMS } from '../content/world.ts'
-import { ZONES } from '../content/palettes.ts'
+import { ZONES, WARM_EMITTERS, COOL_EMITTERS } from '../content/palettes.ts'
 import { MOONLIGHT, MOUNTAIN_KING, GYMNOPEDIE, OUTDOOR_ZONES } from '../content/music/tunes.ts'
+import { Ambient, Lighting, type LightSource } from './fx.ts'
 import type { Renderer } from '../engine/renderer.ts'
 import type { Input } from '../engine/input.ts'
 import type { Chip, Tune } from '../engine/audio.ts'
 import type { Bank } from './gfx.ts'
+
+/** Guardian sprite kinds that walk/crawl and so deserve a contact shadow. */
+const GROUND_GUARD = new Set([
+  'butler', 'chef', 'gardener', 'sweep', 'knight', 'maid', 'maria',
+  'crab', 'rat', 'slime', 'spider',
+])
+
+const hexA = (hex: string, a: number): string => {
+  const n = parseInt(hex.slice(1), 16)
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`
+}
 
 type Mode = 'title' | 'playing' | 'dying' | 'gameover' | 'ending' | 'paused' | 'map'
 
@@ -61,6 +73,8 @@ export class Game {
 
   private particles: Particle[] = []
   private currentTune: Tune | null = null
+  private ambient = new Ambient()
+  private lighting = new Lighting()
 
   constructor(
     private input: Input,
@@ -132,6 +146,7 @@ export class Game {
     }
     this.player.entryGrace = ENTRY_GRACE
     this.visited.add(id)
+    this.ambient.setKind(ZONES[this.room.def.zone].ambient)
     this.music()
     this.save()
   }
@@ -323,6 +338,7 @@ export class Game {
     if (this.rescued > 0) this.rescued--
     if (this.globalT % 120 === 0) this.clockMin++
     this.updateParticles()
+    this.ambient.update(this.t)
 
     const p = this.player
     const events = stepPlayer(p, this.input.state(), this.room, this.t)
@@ -433,6 +449,7 @@ export class Game {
   private renderRoomAndHud(r: Renderer): void {
     const ctx = r.ctx
     const room = this.room
+    const zone = ZONES[room.def.zone]
     const zt = this.bank.zones[room.def.zone]
     ctx.drawImage(zt.bg, 0, 0)
 
@@ -498,45 +515,29 @@ export class Game {
         }
       }
 
-    // items
-    for (let i = 0; i < room.items.length; i++) {
-      const it = room.items[i]
-      if (this.collected.has(it.id)) continue
-      const pulse = Math.sin(this.t / 9 + i * 1.7)
-      const hue = (this.t * 3 + i * 47) % 360
-      const cx = it.col * CELL + 8
-      const cy = it.row * CELL + 8 + pulse
-      ctx.save()
-      ctx.shadowColor = `hsl(${hue} 90% 65%)`
-      ctx.shadowBlur = 6
-      ctx.fillStyle = `hsl(${hue} 85% 62%)`
-      ctx.beginPath()
-      ctx.moveTo(cx, cy - 5)
-      ctx.lineTo(cx + 4, cy)
-      ctx.lineTo(cx, cy + 5)
-      ctx.lineTo(cx - 4, cy)
-      ctx.closePath()
-      ctx.fill()
-      ctx.fillStyle = 'rgba(255,255,255,0.9)'
-      ctx.fillRect(cx - 1, cy - 2, 1, 1)
-      ctx.restore()
-    }
+    this.renderDepth(ctx, room)
 
     // ropes
     for (const def of room.def.ropes ?? []) {
-      ctx.fillStyle = '#e8dcc0'
+      ctx.fillStyle = '#3a2e1c'
       const len = def.len * CELL
+      for (let s = 0; s <= len; s += 4) {
+        const pt = ropePoint(def, this.t, s)
+        ctx.fillRect(pt.x, pt.y, 2, 2)
+      }
+      ctx.fillStyle = '#e8dcc0'
       for (let s = 0; s <= len; s += 4) {
         const pt = ropePoint(def, this.t, s)
         ctx.fillRect(pt.x - 1, pt.y, 2, 2)
       }
     }
 
-    // guardians
+    // guardians (with contact shadows for ground walkers)
     for (const def of room.def.guardians ?? []) {
       const g = guardianPos(def, this.t)
       const sprites = this.bank.guard[def.type]
       if (!sprites) continue
+      if (GROUND_GUARD.has(def.type)) this.blobShadow(ctx, g.x + g.w / 2, g.y + g.h, g.w * 0.4)
       const frames = g.dir >= 0 ? sprites.R : sprites.L
       const f = frames[Math.floor(this.t / 11) % frames.length]
       ctx.drawImage(f, Math.round(g.x), Math.round(g.y))
@@ -562,6 +563,7 @@ export class Game {
     // Willy
     if (this.mode !== 'dying') {
       const p = this.player
+      this.blobShadow(ctx, p.x + P_W / 2, p.y + P_H, 6)
       const blink = p.grace > 0 && Math.floor(this.t / 4) % 2 === 0
       if (!blink) {
         const frames = p.facing > 0 ? this.bank.willyR : this.bank.willyL
@@ -583,40 +585,209 @@ export class Game {
       ctx.restore()
     }
 
-    // particles
+    // dynamic lighting: darkness + light pools for the dim zones
+    this.lighting.render(ctx, zone, this.collectLights())
+
+    // items (drawn after lighting so they always read, with a bloom halo)
+    for (let i = 0; i < room.items.length; i++) {
+      const it = room.items[i]
+      if (this.collected.has(it.id)) continue
+      const pulse = Math.sin(this.t / 9 + i * 1.7)
+      const hue = (this.t * 3 + i * 47) % 360
+      const cx = it.col * CELL + 8
+      const cy = it.row * CELL + 8 + pulse
+      // bloom halo
+      ctx.save()
+      ctx.globalCompositeOperation = 'lighter'
+      const halo = ctx.createRadialGradient(cx, cy, 0, cx, cy, 9)
+      halo.addColorStop(0, `hsla(${hue}, 90%, 70%, 0.7)`)
+      halo.addColorStop(1, `hsla(${hue}, 90%, 70%, 0)`)
+      ctx.fillStyle = halo
+      ctx.beginPath()
+      ctx.arc(cx, cy, 9, 0, 7)
+      ctx.fill()
+      ctx.restore()
+      // gem
+      ctx.fillStyle = `hsl(${hue} 85% 60%)`
+      ctx.beginPath()
+      ctx.moveTo(cx, cy - 5)
+      ctx.lineTo(cx + 4, cy)
+      ctx.lineTo(cx, cy + 5)
+      ctx.lineTo(cx - 4, cy)
+      ctx.closePath()
+      ctx.fill()
+      ctx.fillStyle = `hsl(${hue} 90% 78%)`
+      ctx.beginPath()
+      ctx.moveTo(cx, cy - 5)
+      ctx.lineTo(cx + 4, cy)
+      ctx.lineTo(cx, cy)
+      ctx.closePath()
+      ctx.fill()
+      // twinkle
+      const tw = (Math.sin(this.t / 6 + i) + 1) / 2
+      ctx.fillStyle = `rgba(255,255,255,${0.5 + tw * 0.5})`
+      ctx.fillRect(cx - 1, cy - 2, 1, 1)
+      if (tw > 0.7) {
+        ctx.fillStyle = 'rgba(255,255,255,0.8)'
+        ctx.fillRect(cx, cy - 8, 1, 3)
+        ctx.fillRect(cx - 1, cy - 7, 3, 1)
+      }
+    }
+
+    // particles (after lighting so collect sparkles pop in dark rooms)
+    ctx.save()
+    ctx.globalCompositeOperation = 'lighter'
     for (const pt of this.particles) {
       ctx.fillStyle = pt.color
       ctx.globalAlpha = Math.min(1, pt.life / 20)
       ctx.fillRect(pt.x, pt.y, 2, 2)
     }
+    ctx.restore()
     ctx.globalAlpha = 1
 
+    // ambient weather
+    this.ambient.draw(ctx, zone, this.t)
+
     ctx.drawImage(this.bank.vignette, 0, 0)
+    ctx.globalAlpha = 0.5
+    ctx.drawImage(this.bank.scanlines, 0, 0)
+    ctx.globalAlpha = 1
     this.renderHud(r)
+  }
+
+  /** Soft floor shadow for a sprite standing/walking at (cx, footY). */
+  private blobShadow(ctx: CanvasRenderingContext2D, cx: number, footY: number, rx: number): void {
+    ctx.save()
+    ctx.fillStyle = 'rgba(0,0,0,0.28)'
+    ctx.beginPath()
+    ctx.ellipse(cx, footY, rx, Math.max(2, rx * 0.35), 0, 0, 7)
+    ctx.fill()
+    ctx.restore()
+  }
+
+  /** Depth pass: drop shadows under floating platforms, lit tops on exposed walls. */
+  private renderDepth(ctx: CanvasRenderingContext2D, room: Room): void {
+    for (let row = 0; row < ROWS; row++)
+      for (let col = 0; col < COLS; col++) {
+        const tl = room.tiles[row * COLS + col]
+        const x = col * CELL
+        const y = row * CELL
+        if (tl === T.PLATFORM || tl === T.CONV_L || tl === T.CONV_R) {
+          const below = row < ROWS - 1 ? room.tiles[(row + 1) * COLS + col] : T.WALL
+          if (below === T.EMPTY || below >= T.DECO_A) {
+            const grad = ctx.createLinearGradient(0, y + 6, 0, y + 14)
+            grad.addColorStop(0, 'rgba(0,0,0,0.22)')
+            grad.addColorStop(1, 'rgba(0,0,0,0)')
+            ctx.fillStyle = grad
+            ctx.fillRect(x, y + 6, CELL, 8)
+          }
+        } else if (tl === T.WALL) {
+          const above = row > 0 ? room.tiles[(row - 1) * COLS + col] : T.WALL
+          if (above === T.EMPTY || above >= T.DECO_A) {
+            ctx.fillStyle = 'rgba(255,255,255,0.12)'
+            ctx.fillRect(x, y, CELL, 1)
+            ctx.fillStyle = 'rgba(255,255,255,0.05)'
+            ctx.fillRect(x, y + 1, CELL, 1)
+          }
+        }
+      }
+  }
+
+  /** Light sources for the current room, fed to the lighting pass. */
+  private collectLights(): LightSource[] {
+    const room = this.room
+    const z = ZONES[room.def.zone]
+    if (z.dark < 0.08) return []
+    const lights: LightSource[] = []
+    const flick = (ph: number) =>
+      1 + 0.08 * Math.sin(this.t * 0.3 + ph) + 0.04 * Math.sin(this.t * 0.13 + ph * 2)
+    for (let row = 0; row < ROWS; row++)
+      for (let col = 0; col < COLS; col++) {
+        const tl = room.tiles[row * COLS + col]
+        const cx = col * CELL + 8
+        if (tl === T.DECO_A || tl === T.DECO_B || tl === T.DECO_C) {
+          const kind = z.deco[tl - T.DECO_A]
+          if (WARM_EMITTERS.has(kind))
+            lights.push({ x: cx, y: row * CELL + 6, r: 54 * flick(col * 7 + row * 13), color: z.light, cut: 0.95, glow: 0.3 })
+          else if (COOL_EMITTERS.has(kind))
+            lights.push({ x: cx, y: row * CELL + 8, r: 48, color: z.light, cut: 0.82, glow: 0.18 })
+        } else if (tl === T.HAZARD && z.hazard === 'fire') {
+          lights.push({ x: cx, y: row * CELL + 8, r: 46 * flick(col * 5 + row * 9), color: '#ff8a3a', cut: 0.9, glow: 0.32 })
+        } else if (tl === T.BED) {
+          lights.push({ x: cx + 8, y: row * CELL + 8, r: 64, color: z.light, cut: 0.9, glow: 0.22 })
+        }
+      }
+    for (const it of room.items) {
+      if (this.collected.has(it.id)) continue
+      lights.push({ x: it.col * CELL + 8, y: it.row * CELL + 8, r: 26, color: '#fff0a0', cut: 0.6, glow: 0.12 })
+    }
+    // Willy carries his own glow so the player is always readable in the dark.
+    const p = this.player
+    lights.push({ x: p.x + P_W / 2, y: p.y + P_H / 2, r: 84, color: '#ffe8c0', cut: 0.86, glow: 0.05 })
+    return lights
   }
 
   private renderHud(r: Renderer): void {
     const ctx = r.ctx
     const zone = ZONES[this.room.def.zone]
-    ctx.fillStyle = '#0c0c14'
+    // panelled background
+    const bg = ctx.createLinearGradient(0, ROOM_H, 0, VIEW_H)
+    bg.addColorStop(0, '#16131f')
+    bg.addColorStop(1, '#08070d')
+    ctx.fillStyle = bg
     ctx.fillRect(0, ROOM_H, VIEW_W, HUD_H)
+    // glowing top rule in the zone colour
+    ctx.save()
+    ctx.globalCompositeOperation = 'lighter'
+    const gl = ctx.createLinearGradient(0, ROOM_H - 5, 0, ROOM_H + 5)
+    gl.addColorStop(0, 'rgba(0,0,0,0)')
+    gl.addColorStop(0.5, hexA(zone.banner, 0.45))
+    gl.addColorStop(1, 'rgba(0,0,0,0)')
+    ctx.fillStyle = gl
+    ctx.fillRect(0, ROOM_H - 5, VIEW_W, 10)
+    ctx.restore()
     ctx.fillStyle = zone.banner
     ctx.fillRect(0, ROOM_H, VIEW_W, 1)
 
-    const name = this.rescued > 0 ? 'A HELPING HAND...' : this.room.def.name
-    r.textCentered(name.toUpperCase(), VIEW_W / 2, ROOM_H + 8, zone.banner, 2)
+    // room-name banner with a drop shadow
+    const name = (this.rescued > 0 ? 'A HELPING HAND...' : this.room.def.name).toUpperCase()
+    r.textCentered(name, VIEW_W / 2 + 1, ROOM_H + 9, '#000000', 2)
+    r.textCentered(name, VIEW_W / 2, ROOM_H + 8, zone.banner, 2)
 
-    // items
+    // items: glowing gem + count + tidy bar
     const pct = Math.floor((this.collected.size / Math.max(1, TOTAL_ITEMS)) * 100)
-    r.text(`ITEMS ${this.collected.size}/${TOTAL_ITEMS}`, 8, ROOM_H + 34, '#ffe084', 1)
-    r.text(`${pct}% TIDY`, 8, ROOM_H + 46, '#a8a8b8', 1)
+    const gx = 11, gy = ROOM_H + 37
+    const hue = (this.globalT * 2) % 360
+    ctx.save()
+    ctx.globalCompositeOperation = 'lighter'
+    const halo = ctx.createRadialGradient(gx, gy, 0, gx, gy, 7)
+    halo.addColorStop(0, `hsla(${hue},90%,70%,0.8)`)
+    halo.addColorStop(1, `hsla(${hue},90%,70%,0)`)
+    ctx.fillStyle = halo
+    ctx.beginPath(); ctx.arc(gx, gy, 7, 0, 7); ctx.fill()
+    ctx.restore()
+    ctx.fillStyle = `hsl(${hue} 85% 62%)`
+    ctx.beginPath()
+    ctx.moveTo(gx, gy - 4); ctx.lineTo(gx + 3, gy); ctx.lineTo(gx, gy + 4); ctx.lineTo(gx - 3, gy)
+    ctx.closePath(); ctx.fill()
+    r.text(`${this.collected.size}/${TOTAL_ITEMS}`, 20, ROOM_H + 33, '#ffe084', 1)
+    ctx.fillStyle = '#26222e'
+    ctx.fillRect(8, ROOM_H + 47, 72, 4)
+    ctx.fillStyle = pct >= 100 ? '#8ae08a' : '#c8a84a'
+    ctx.fillRect(8, ROOM_H + 47, Math.round((72 * pct) / 100), 4)
+    ctx.fillStyle = hexA('#ffffff', 0.4)
+    ctx.fillRect(8, ROOM_H + 47, 72, 1)
+    r.text(`${pct}% TIDY`, 84, ROOM_H + 46, '#8a90a0', 1)
 
-    // lives as marching willys
+    // lives on a little shelf
     const willy = this.bank.willyR[Math.floor(this.globalT / 10) % 2 === 0 ? 0 : 1]
     const shown = Math.min(this.lives, 8)
+    const lx = 178
     for (let i = 0; i < shown; i++)
-      ctx.drawImage(willy, 150 + i * 14, ROOM_H + 34, 8, 16)
-    if (this.practice) r.text('PRACTICE', 150, ROOM_H + 52, '#6a8aa8', 1)
+      ctx.drawImage(willy, lx + i * 13, ROOM_H + 32, 8, 16)
+    ctx.fillStyle = hexA(zone.banner, 0.5)
+    ctx.fillRect(lx - 2, ROOM_H + 49, Math.max(1, shown) * 13, 1)
+    if (this.practice) r.text('PRACTICE', lx, ROOM_H + 52, '#6a8aa8', 1)
 
     // clock
     const totalMin = 19 * 60 + this.clockMin
@@ -675,25 +846,90 @@ export class Game {
   private renderTitle(r: Renderer): void {
     const ctx = r.ctx
     const grad = ctx.createLinearGradient(0, 0, 0, VIEW_H)
-    grad.addColorStop(0, '#10101e')
-    grad.addColorStop(1, '#2a1a3a')
+    grad.addColorStop(0, '#0a0a18')
+    grad.addColorStop(0.6, '#1a1230')
+    grad.addColorStop(1, '#2c1a3e')
     ctx.fillStyle = grad
     ctx.fillRect(0, 0, VIEW_W, VIEW_H)
 
-    // moonlit mansion silhouette
-    ctx.fillStyle = '#e8e8d8'
-    ctx.beginPath()
-    ctx.arc(440, 50, 22, 0, 7)
-    ctx.fill()
-    ctx.fillStyle = '#08080e'
-    for (const [bx, bw, bh] of [[40, 90, 90], [130, 120, 130], [250, 80, 100], [330, 110, 80]]) {
-      ctx.fillRect(bx, 240 - bh, bw, bh)
+    // twinkling starfield
+    for (let i = 0; i < 90; i++) {
+      const x = (i * 97 + 13) % VIEW_W
+      const y = (i * 53 + 7) % 210
+      const tw = (Math.sin(this.globalT * 0.05 + i) + 1) / 2
+      ctx.fillStyle = `rgba(255,255,255,${0.18 + tw * 0.5})`
+      const s = i % 11 === 0 ? 2 : 1
+      ctx.fillRect(x, y, s, s)
     }
-    ctx.fillStyle = '#ffe084'
-    for (const [wx, wy] of [[60, 180], [160, 140], [200, 170], [270, 165], [350, 185]])
-      if (Math.floor(this.globalT / 40 + wx) % 5 !== 0) ctx.fillRect(wx, wy, 6, 8)
 
+    // glowing moon
+    const mg = ctx.createRadialGradient(430, 60, 8, 430, 60, 90)
+    mg.addColorStop(0, 'rgba(232,238,255,0.5)')
+    mg.addColorStop(1, 'rgba(232,238,255,0)')
+    ctx.fillStyle = mg
+    ctx.fillRect(300, 0, 212, 200)
+    ctx.fillStyle = '#eef0fb'
+    ctx.beginPath(); ctx.arc(430, 60, 22, 0, 7); ctx.fill()
+    ctx.fillStyle = 'rgba(180,190,220,0.35)'
+    ctx.beginPath(); ctx.arc(438, 52, 6, 0, 7); ctx.arc(422, 68, 4, 0, 7); ctx.fill()
+
+    // distant treeline
+    ctx.fillStyle = '#0a0a16'
+    ctx.beginPath(); ctx.moveTo(0, 240)
+    for (let x = 0; x <= VIEW_W; x += 28)
+      ctx.lineTo(x, 214 + ((x * 7) % 5 === 0 ? 6 : 0) - ((x % 56 === 0) ? 12 : 0))
+    ctx.lineTo(VIEW_W, 240); ctx.closePath(); ctx.fill()
+
+    // mansion silhouette
+    ctx.fillStyle = '#06060e'
+    ctx.fillRect(70, 184, 80, 56)
+    ctx.fillRect(300, 178, 96, 62)
+    ctx.fillRect(120, 150, 200, 90)
+    ctx.beginPath(); ctx.moveTo(108, 152); ctx.lineTo(220, 108); ctx.lineTo(332, 152); ctx.closePath(); ctx.fill()
+    ctx.fillRect(202, 96, 44, 144)
+    ctx.beginPath(); ctx.moveTo(196, 98); ctx.lineTo(224, 62); ctx.lineTo(252, 98); ctx.closePath(); ctx.fill()
+    ctx.fillStyle = '#06060e'
+    ctx.fillRect(0, 238, VIEW_W, VIEW_H - 238)
+
+    // lit windows (warm, flickering) + a bright glowing tower window
+    for (const [wx, wy] of [[90, 198], [126, 198], [150, 172], [250, 170], [284, 196], [330, 196], [362, 192]] as const)
+      if (Math.floor(this.globalT / 40 + wx) % 5 !== 0) {
+        ctx.fillStyle = '#ffcf6a'
+        ctx.fillRect(wx, wy, 6, 8)
+      }
+    ctx.save()
+    ctx.globalCompositeOperation = 'lighter'
+    const tw = ctx.createRadialGradient(224, 118, 2, 224, 118, 28)
+    tw.addColorStop(0, 'rgba(255,200,110,0.7)')
+    tw.addColorStop(1, 'rgba(255,200,110,0)')
+    ctx.fillStyle = tw
+    ctx.beginPath(); ctx.arc(224, 118, 28, 0, 7); ctx.fill()
+    ctx.restore()
+    ctx.fillStyle = '#ffe6a0'
+    ctx.fillRect(220, 112, 8, 12)
+
+    // drifting fog
+    ctx.save()
+    ctx.globalAlpha = 0.12
+    for (let i = 0; i < 4; i++) {
+      const fx = ((this.globalT * 0.2 + i * 160) % (VIEW_W + 160)) - 80
+      ctx.fillStyle = '#b0b0d0'
+      ctx.beginPath(); ctx.ellipse(fx, 224 - i * 6, 90, 14, 0, 0, 7); ctx.fill()
+    }
+    ctx.restore()
+
+    // title with a warm bloom behind it
+    ctx.save()
+    ctx.globalCompositeOperation = 'lighter'
+    const tg = ctx.createRadialGradient(VIEW_W / 2, 64, 10, VIEW_W / 2, 64, 170)
+    tg.addColorStop(0, 'rgba(255,196,84,0.22)')
+    tg.addColorStop(1, 'rgba(255,196,84,0)')
+    ctx.fillStyle = tg
+    ctx.fillRect(0, 0, VIEW_W, 150)
+    ctx.restore()
+    r.textCentered('JETSET', VIEW_W / 2 + 2, 40, '#3a2606', 6)
     r.textCentered('JETSET', VIEW_W / 2, 38, '#ffe084', 6)
+    r.textCentered('MANOR', VIEW_W / 2 + 2, 88, '#181826', 6)
     r.textCentered('MANOR', VIEW_W / 2, 86, '#ffffff', 6)
     r.textCentered('A TRIBUTE TO JET SET WILLY', VIEW_W / 2, 136, '#a08ab8', 1)
 
@@ -701,49 +937,113 @@ export class Game {
     opts.forEach((o, i) => {
       const sel = i === this.menuIdx
       const blink = sel && Math.floor(this.globalT / 20) % 2 === 0
+      if (sel) {
+        ctx.fillStyle = hexA('#ffe084', 0.12)
+        ctx.fillRect(VIEW_W / 2 - 70, 165 + i * 16, 140, 13)
+      }
       r.textCentered(
         `${sel ? '> ' : '  '}${o}${sel ? ' <' : '  '}`,
-        VIEW_W / 2, 170 + i * 16,
+        VIEW_W / 2, 168 + i * 16,
         blink ? '#ffffff' : sel ? '#ffe084' : '#8888a0', 1,
       )
     })
 
-    // a little Willy marching across the bottom
+    // a little Willy marching across the bottom, with a shadow
     const wx = (this.globalT * 0.8) % (VIEW_W + 40) - 20
     const wf = this.bank.willyR[Math.floor(this.globalT / 8) % 2 === 0 ? 1 : 2]
+    ctx.fillStyle = 'rgba(0,0,0,0.3)'
+    ctx.beginPath(); ctx.ellipse(wx + 8, 254, 7, 2, 0, 0, 7); ctx.fill()
     ctx.drawImage(wf, wx, 222)
-    ctx.fillStyle = '#08080e'
-    ctx.fillRect(0, 254, VIEW_W, 2)
+    ctx.fillStyle = '#06060e'
+    ctx.fillRect(0, 255, VIEW_W, 2)
 
     r.textCentered('ARROWS/WASD MOVE   Z/SPACE JUMP', VIEW_W / 2, 268, '#7a7a8e', 1)
     r.textCentered('DOWN + JUMP DROPS THROUGH PLATFORMS', VIEW_W / 2, 280, '#9a9ab0', 1)
     r.textCentered('ESC PAUSE   TAB MAP   N MUSIC', VIEW_W / 2, 292, '#7a7a8e', 1)
     r.textCentered(
       `M: PRACTICE MODE ${this.practice ? 'ON' : 'OFF'}`,
-      VIEW_W / 2, 298, this.practice ? '#8ae08a' : '#55556a', 1,
+      VIEW_W / 2, 304, this.practice ? '#8ae08a' : '#55556a', 1,
     )
   }
 
   private renderGameOver(r: Renderer): void {
-    r.clear('#08080c')
-    r.textCentered('GAME OVER', VIEW_W / 2, 90, '#c0303a', 4)
+    const ctx = r.ctx
+    const grad = ctx.createRadialGradient(VIEW_W / 2, 120, 20, VIEW_W / 2, 120, 320)
+    grad.addColorStop(0, '#1a0a10')
+    grad.addColorStop(1, '#06040a')
+    ctx.fillStyle = grad
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H)
+
+    // a fallen, faded Willy
+    ctx.save()
+    ctx.globalAlpha = 0.4
+    ctx.translate(VIEW_W / 2, 174)
+    ctx.rotate(Math.PI / 2)
+    ctx.drawImage(this.bank.willyR[0], -16, -8)
+    ctx.restore()
+
+    // red bloom behind the title
+    ctx.save()
+    ctx.globalCompositeOperation = 'lighter'
+    const tg = ctx.createRadialGradient(VIEW_W / 2, 86, 8, VIEW_W / 2, 86, 150)
+    tg.addColorStop(0, 'rgba(200,40,50,0.28)')
+    tg.addColorStop(1, 'rgba(200,40,50,0)')
+    ctx.fillStyle = tg
+    ctx.fillRect(0, 10, VIEW_W, 150)
+    ctx.restore()
+    r.textCentered('GAME OVER', VIEW_W / 2 + 2, 92, '#2a0608', 4)
+    r.textCentered('GAME OVER', VIEW_W / 2, 90, '#e0404a', 4)
     r.textCentered(
       `${this.collected.size} ITEMS   ${this.visited.size} ROOMS   ${this.deaths} DEATHS`,
-      VIEW_W / 2, 150, '#a8a8b8', 1,
+      VIEW_W / 2, 210, '#a8a8b8', 1,
     )
-    if (this.endTimer > 90)
-      r.textCentered('PRESS ENTER', VIEW_W / 2, 200, '#ffffff', 1)
+    if (this.endTimer > 90 && Math.floor(this.globalT / 24) % 2 === 0)
+      r.textCentered('PRESS ENTER', VIEW_W / 2, 244, '#ffffff', 1)
   }
 
   private renderEnding(r: Renderer): void {
     const ctx = r.ctx
     const grad = ctx.createLinearGradient(0, 0, 0, VIEW_H)
-    grad.addColorStop(0, '#1a1028')
+    grad.addColorStop(0, '#160c24')
     grad.addColorStop(1, '#3a2448')
     ctx.fillStyle = grad
     ctx.fillRect(0, 0, VIEW_W, VIEW_H)
 
     const pct = Math.floor((this.collected.size / Math.max(1, TOTAL_ITEMS)) * 100)
+
+    // moonlit window behind the bed
+    ctx.fillStyle = '#0e1024'
+    ctx.fillRect(96, 86, 64, 96)
+    const wg = ctx.createLinearGradient(0, 86, 0, 182)
+    wg.addColorStop(0, '#243056')
+    wg.addColorStop(1, '#0e1024')
+    ctx.save()
+    ctx.beginPath(); ctx.rect(99, 89, 58, 90); ctx.clip()
+    ctx.fillStyle = wg
+    ctx.fillRect(96, 86, 64, 96)
+    for (let i = 0; i < 16; i++) {
+      const x = 99 + ((i * 41 + 5) % 56)
+      const y = 90 + ((i * 23 + 3) % 78)
+      ctx.fillStyle = `rgba(255,255,255,${0.3 + ((i * 7) % 5) * 0.12})`
+      ctx.fillRect(x, y, 1, 1)
+    }
+    ctx.fillStyle = '#eef0fb'
+    ctx.beginPath(); ctx.arc(140, 112, 9, 0, 7); ctx.fill()
+    ctx.restore()
+    ctx.strokeStyle = '#6a5a4a'; ctx.lineWidth = 2
+    ctx.strokeRect(99, 89, 58, 90)
+    ctx.beginPath(); ctx.moveTo(128, 90); ctx.lineTo(128, 178); ctx.moveTo(100, 134); ctx.lineTo(156, 134); ctx.stroke()
+
+    // warm glow over the bed
+    ctx.save()
+    ctx.globalCompositeOperation = 'lighter'
+    const bedGlow = ctx.createRadialGradient(256, 132, 6, 256, 132, 90)
+    bedGlow.addColorStop(0, 'rgba(255,210,140,0.22)')
+    bedGlow.addColorStop(1, 'rgba(255,210,140,0)')
+    ctx.fillStyle = bedGlow
+    ctx.beginPath(); ctx.arc(256, 132, 90, 0, 7); ctx.fill()
+    ctx.restore()
+
     r.textCentered('AT LAST...', VIEW_W / 2, 40, '#ffe084', 2)
     r.textCentered('WILLY MADE IT TO BED', VIEW_W / 2, 64, '#ffffff', 2)
 
@@ -754,6 +1054,28 @@ export class Game {
     ctx.rotate(-Math.PI / 2)
     ctx.drawImage(this.bank.willyR[0], -16, -8, 16, 32)
     ctx.restore()
+
+    // floating ZZZ
+    for (let i = 0; i < 3; i++) {
+      const ph = this.endTimer * 0.03 + i * 0.9
+      const zx = 286 + i * 9 + Math.sin(ph) * 2
+      const zy = 110 - i * 11 - ((this.endTimer * 0.4 + i * 30) % 40)
+      r.text('Z', zx, zy, `rgba(220,228,255,${Math.max(0, 1 - ((this.endTimer * 0.4 + i * 30) % 40) / 40)})`, 1 + i * 0.5)
+    }
+
+    // gold celebration sparkles for a perfect tidy
+    if (pct >= 100) {
+      ctx.save()
+      ctx.globalCompositeOperation = 'lighter'
+      for (let i = 0; i < 24; i++) {
+        const x = (i * 89 + this.endTimer * (1 + (i % 3))) % VIEW_W
+        const y = (i * 61 + this.endTimer * 0.6) % 240
+        const tw = (Math.sin(this.endTimer * 0.1 + i) + 1) / 2
+        ctx.fillStyle = `rgba(255,224,128,${0.3 + tw * 0.6})`
+        ctx.fillRect(x, y, tw > 0.7 ? 2 : 1, tw > 0.7 ? 2 : 1)
+      }
+      ctx.restore()
+    }
 
     if (pct >= 100) {
       r.textCentered('THE MANSION IS SPOTLESS!', VIEW_W / 2, 196, '#8ae08a', 1)
